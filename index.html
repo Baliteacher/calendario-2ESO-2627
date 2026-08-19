@@ -75,6 +75,35 @@
     let editUnlocked=false;
     let editToken=null;
 
+    // ==== CUMPLEAÑOS ====
+    const BIRTHDAY_BG='#D9BFA0', BIRTHDAY_FG='#5c4126';
+    let birthdaysByMonthDay={};
+    function getBirthdays(m,d){return birthdaysByMonthDay[`${m}/${d}`]||[];}
+
+    async function loadBirthdays(){
+      try{
+        const res=await fetch(API_URL+'?sheet=cumpleanos',{method:'GET'});
+        if(!res.ok) return;
+        const records=await res.json();
+        const map={};
+        records.forEach(r=>{
+          const fecha=(r.fecha_nacimiento||'').trim();
+          const m=fecha.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+          if(!m) return;
+          const day=parseInt(m[1],10), month=parseInt(m[2],10)-1;
+          const key=`${month}/${day}`;
+          const name=`${r.nombre||''} ${r.apellidos||''}`.trim();
+          if(!name) return;
+          if(!map[key]) map[key]=[];
+          map[key].push(name);
+        });
+        birthdaysByMonthDay=map;
+        render();
+      }catch(err){
+        console.error('Error cargando cumpleaños:',err);
+      }
+    }
+
     function updateEditUI(){
       const yearInp=document.getElementById('year-input');
       const monthInp=document.getElementById('month-input');
@@ -240,12 +269,13 @@
 
     function updateMiniCalCell(k){
       const cell=container.querySelector(`[data-scroll-key="${k}"]`);if(!cell)return;
-      const parts=k.split('/'),m=parseInt(parts[1]),p=monthColors[m];
-      const dow=dayOfWeek(parseInt(parts[0]),m,parseInt(parts[2]));
+      const parts=k.split('/'),m=parseInt(parts[1]),d=parseInt(parts[2]),p=monthColors[m];
+      const dow=dayOfWeek(parseInt(parts[0]),m,d);
       const isW=dow>=5,hc=hasContent(k),fest=isFestivo(k);
-      cell.style.background=fest?festivoBg(m):((isW||hc)?p.bg+'55':'transparent');
-      cell.style.color=fest?p.fg:'';
-      cell.style.fontWeight=(hc||fest)?'bold':'';
+      const bdays=getBirthdays(m,d),isBday=bdays.length>0;
+      cell.style.background=isBday?BIRTHDAY_BG:(fest?festivoBg(m):((isW||hc)?p.bg+'55':'transparent'));
+      cell.style.color=isBday?BIRTHDAY_FG:(fest?p.fg:'');
+      cell.style.fontWeight=(hc||fest||isBday)?'bold':'';
     }
 
     container.addEventListener('click',(e)=>{
@@ -272,23 +302,30 @@
           const dn=i-startDow+1;
           if(dn<1||dn>total){h+=`<div></div>`;continue;}
           const k=dayKey(dy,m,dn),dow=i%7,isW=dow>=5,hc=hasContent(k),fest=isFestivo(k);
-          const bg=fest?festivoBg(m):((isW||hc)?p.bg+'55':'transparent');
-          const fw=(hc||fest)?'font-weight:bold':'';
-          const fc=fest?`color:${p.fg};`:'';
-          h+=`<div class="text-center py-0.5 cursor-pointer hover:opacity-70" style="background:${bg};${fw}${fc}" data-scroll-key="${k}">${dn}</div>`;
+          const bdays=getBirthdays(m,dn),isBday=bdays.length>0;
+          const bg=isBday?BIRTHDAY_BG:(fest?festivoBg(m):((isW||hc)?p.bg+'55':'transparent'));
+          const fw=(hc||fest||isBday)?'font-weight:bold':'';
+          const fc=isBday?`color:${BIRTHDAY_FG};`:(fest?`color:${p.fg};`:'');
+          h+=`<div class="text-center py-0.5 cursor-pointer hover:opacity-70" style="background:${bg};${fw}${fc}" data-scroll-key="${k}" title="${isBday?esc(bdays.join(', ')):''}">${dn}</div>`;
         }
         h+=`</div><div class="border-t text-[11px] max-h-48 overflow-y-auto" style="border-color:${p.bg}">`;
         for(let d=1;d<=total;d++){
           const dow=dayOfWeek(dy,m,d),k=dayKey(dy,m,d),entries=dayEntries[k]||['','','',false];
           const fest=!!entries[3];
-          const rowBg=fest?festivoBg(m):(dow>=5?p.bg+'44':'transparent');
-          const labelColor=p.fg;
+          const bdays=getBirthdays(m,d),isBday=bdays.length>0;
+          const rowBg=isBday?BIRTHDAY_BG:(fest?festivoBg(m):(dow>=5?p.bg+'44':'transparent'));
+          const labelColor=isBday?BIRTHDAY_FG:p.fg;
           h+=`<div class="border-b border-gray-100" style="background:${rowBg}">`;
           h+=`<div class="flex items-center gap-1 px-1.5 py-0.5">`;
           h+=`<input type="checkbox" ${fest?'checked':''} ${editUnlocked?'':'disabled'} data-festivo-key="${k}" title="Marcar como festivo" class="cursor-pointer">`;
           h+=`<span class="font-bold text-[11px]" style="color:${labelColor}">${DIAS_FULL[dow]} ${d}${fest?' · Festivo':''}</span>`;
           h+=`</div>`;
           for(let s=0;s<3;s++)h+=`<input type="text" ${editUnlocked?'':'readonly'} class="w-full px-2 py-0.5 text-[11px] border-none ${editUnlocked?'bg-white':'bg-gray-50'} text-gray-800 focus:ring-1 focus:ring-blue-300" data-key="${k}" data-slot="${s}" placeholder="---" value="${esc(entries[s])}">`;
+          if(isBday){
+            bdays.forEach(name=>{
+              h+=`<div class="px-2 py-0.5 text-[11px] font-semibold" style="color:${BIRTHDAY_FG}">🎂 ${esc(name)}</div>`;
+            });
+          }
           h+=`</div>`;
         }
         h+=`</div></div>`;
@@ -303,12 +340,14 @@
       let h=`<table class="w-full border-collapse text-sm"><thead><tr style="background:${p.bg}"><th class="border px-3 py-2 text-left" style="color:${p.fg}">Fecha</th><th class="border px-3 py-2" style="color:${p.fg}"></th><th class="border px-3 py-2" style="color:${p.fg}"></th><th class="border px-3 py-2" style="color:${p.fg}"></th></tr></thead><tbody>`;
       for(let d=1;d<=total;d++){
         const k=dayKey(y,m,d),entries=dayEntries[k]||['','','',false],fest=!!entries[3];
+        const bdays=getBirthdays(m,d),isBday=bdays.length>0;
         const hasText=(entries[0]&&entries[0].trim())||(entries[1]&&entries[1].trim())||(entries[2]&&entries[2].trim());
-        if(!hasText&&!fest)continue;
+        if(!hasText&&!fest&&!isBday)continue;
         const dow=dayOfWeek(y,m,d);
-        const bg=fest?festivoBg(m):(dow>=5?p.bg+'22':'transparent');
-        const labelColor=fest?`style="color:${p.fg}"`:'';
-        h+=`<tr style="background:${bg}"><td class="border px-3 py-2 font-medium" ${labelColor}>${DIAS_FULL[dow]} ${d}${fest?' · Festivo':''}</td>`;
+        const bg=isBday?BIRTHDAY_BG:(fest?festivoBg(m):(dow>=5?p.bg+'22':'transparent'));
+        const labelColor=(isBday||fest)?`style="color:${isBday?BIRTHDAY_FG:p.fg}"`:'';
+        const bdayLabel=isBday?` · 🎂 ${esc(bdays.join(', '))}`:'';
+        h+=`<tr style="background:${bg}"><td class="border px-3 py-2 font-medium" ${labelColor}>${DIAS_FULL[dow]} ${d}${fest?' · Festivo':''}${bdayLabel}</td>`;
         for(let s=0;s<3;s++)h+=`<td class="border px-3 py-2">${esc(entries[s])}</td>`;
         h+=`</tr>`;
       }
@@ -321,18 +360,20 @@
 
     function openFullPreview(){
       const year=getYear(),sm=getStartMonth();
-      let h=`<div class="text-center mb-6"><h1 class="text-2xl font-bold" style="color:#001a72">Calendario Escolar ${year}-${year+1}</h1></div>`;
+      let h=`<div class="text-center mb-6"><h1 class="text-2xl font-bold" style="color:#001a72">Calendario Tutoría 2º ESO C ${year}-${year+1}</h1></div>`;
       for(let idx=0;idx<12;idx++){
         const m=(sm+idx)%12,dy=year+Math.floor((sm+idx)/12),p=monthColors[m],total=daysInMonth(dy,m);
         h+=`<div class="mb-6 border rounded-lg overflow-hidden" style="border-color:${p.bg}"><div class="px-4 py-3 font-bold text-lg text-center" style="background:${p.bg};color:${p.fg}">${MESES[m]} ${dy}</div><table class="w-full border-collapse text-xs"><tbody>`;
         for(let d=1;d<=total;d++){
           const k=dayKey(dy,m,d),entries=dayEntries[k]||['','','',false],fest=!!entries[3];
+          const bdays=getBirthdays(m,d),isBday=bdays.length>0;
           const hasText=(entries[0]&&entries[0].trim())||(entries[1]&&entries[1].trim())||(entries[2]&&entries[2].trim());
-          if(!hasText&&!fest)continue;
+          if(!hasText&&!fest&&!isBday)continue;
           const dow=dayOfWeek(dy,m,d);
-          const bg=fest?festivoBg(m):'transparent';
-          const labelColor=fest?`style="color:${p.fg}"`:'';
-          h+=`<tr style="background:${bg}"><td class="border px-2 py-1 font-medium" ${labelColor}>${DIAS_FULL[dow]} ${d}${fest?' · Festivo':''}</td>`;
+          const bg=isBday?BIRTHDAY_BG:(fest?festivoBg(m):'transparent');
+          const labelColor=(isBday||fest)?`style="color:${isBday?BIRTHDAY_FG:p.fg}"`:'';
+          const bdayLabel=isBday?` · 🎂 ${esc(bdays.join(', '))}`:'';
+          h+=`<tr style="background:${bg}"><td class="border px-2 py-1 font-medium" ${labelColor}>${DIAS_FULL[dow]} ${d}${fest?' · Festivo':''}${bdayLabel}</td>`;
           for(let s=0;s<3;s++)h+=`<td class="border px-2 py-1">${esc(entries[s])}</td>`;
           h+=`</tr>`;
         }
@@ -352,6 +393,7 @@
 
     updateEditUI();
     loadData();
+    loadBirthdays();
     tryRestoreSession();
     lucide.createIcons();
   </script>
